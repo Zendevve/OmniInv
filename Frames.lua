@@ -197,6 +197,18 @@ function Frames:Update()
     for _, btn in pairs(self.buttons) do btn:Hide() end
     for _, hdr in pairs(self.headers) do hdr:Hide() end
 
+    -- Dummy Bag Getter
+    function Frames:GetDummyBag(bagID)
+        if not self.dummyBags then self.dummyBags = {} end
+        if not self.dummyBags[bagID] then
+            -- Create invisible frame to serve as parent with correct ID
+            local f = CreateFrame("Frame", nil, self.content)
+            f:SetID(bagID)
+            self.dummyBags[bagID] = f
+        end
+        return self.dummyBags[bagID]
+    end
+
     -- Render Sections
     local yOffset = 0
     local btnIdx = 1
@@ -221,21 +233,32 @@ function Frames:Update()
         -- Items Grid
         for i, itemData in ipairs(catItems) do
             local btn = self.buttons[btnIdx]
+            
+            -- Get the dummy bag frame for this item's bag
+            local dummyBag = self:GetDummyBag(itemData.bagID)
+            
             if not btn then
-                btn = CreateFrame("Button", "ZenBagsItem"..btnIdx, self.content, "ContainerFrameItemButtonTemplate")
+                -- Parent the button to the dummy bag so GetParent():GetID() returns the bag ID
+                btn = CreateFrame("Button", "ZenBagsItem"..btnIdx, dummyBag, "ContainerFrameItemButtonTemplate")
                 btn:SetSize(ITEM_SIZE, ITEM_SIZE)
                 self.buttons[btnIdx] = btn
+            else
+                -- Re-parent existing button if needed (though usually we just reuse)
+                if btn:GetParent() ~= dummyBag then
+                    btn:SetParent(dummyBag)
+                end
             end
 
-            -- Grid Position
+            -- Grid Position (Relative to content frame, not the dummy bag)
             local row = math.floor((i - 1) / COLS_PER_SECTION)
             local col = (i - 1) % COLS_PER_SECTION
             
-            btn:SetPoint("TOPLEFT", col * (ITEM_SIZE + PADDING), -yOffset - (row * (ITEM_SIZE + PADDING)))
+            btn:ClearAllPoints()
+            btn:SetPoint("TOPLEFT", self.content, "TOPLEFT", col * (ITEM_SIZE + PADDING), -yOffset - (row * (ITEM_SIZE + PADDING)))
             
             -- Data
             btn:SetID(itemData.slotID)
-            btn.bagID = itemData.bagID
+            -- btn.bagID = itemData.bagID -- Not needed for template, but good for debug
             
             SetItemButtonTexture(btn, itemData.texture)
             SetItemButtonCount(btn, itemData.count)
@@ -263,8 +286,6 @@ function Frames:Update()
             if btn.cooldown then
                 ContainerFrame_UpdateCooldown(itemData.bagID, btn)
             else
-                -- Create cooldown if missing (ContainerFrameItemButtonTemplate usually has it as $parentCooldown)
-                -- But since we might need to ensure it exists:
                 if not btn.Cooldown then
                     btn.Cooldown = CreateFrame("Cooldown", nil, btn, "CooldownFrameTemplate")
                     btn.Cooldown:SetAllPoints()
@@ -284,86 +305,13 @@ function Frames:Update()
             -- Store item data reference
             btn.itemData = itemData
             
-            -- Secure Attributes for Right-Click (Use Item)
-            -- We use a macro to securely use the specific bag/slot
-            btn:SetAttribute("type2", "macro")
-            btn:SetAttribute("macrotext2", "/use " .. itemData.bagID .. " " .. itemData.slotID)
-            
-            -- Register for clicks and drag
-            btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-            btn:RegisterForDrag("LeftButton")
-            
-            -- Click Handler (Left-Click only, Right-Click handled by SecureActionButton macro)
-            btn:SetScript("OnClick", function(self, button, down)
-                local data = self.itemData
-                if button == "LeftButton" then
-                    if IsShiftKeyDown() then
-                        -- Shift + Click: Link in chat
-                        ChatEdit_InsertLink(data.link)
-                    elseif IsControlKeyDown() then
-                        -- Ctrl + Click: Try on equipment
-                        DressUpItemLink(data.link)
-                    else
-                        -- Left-click: Pick up item
-                        PickupContainerItem(data.bagID, data.slotID)
-                    end
-                end
-            end)
-            
-            -- Drag Start Handler
-            btn:SetScript("OnDragStart", function(self)
-                local data = self.itemData
-                PickupContainerItem(data.bagID, data.slotID)
-            end)
-            
-            -- Receive Drag Handler (for placing items)
-            btn:SetScript("OnReceiveDrag", function(self)
-                local data = self.itemData
-                PickupContainerItem(data.bagID, data.slotID)
-            end)
-            
-            -- Tooltip with dynamic shift comparison
-            btn:SetScript("OnEnter", function(self)
-                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                GameTooltip:SetBagItem(self.itemData.bagID, self.itemData.slotID)
-                
-                -- Show comparison if shift is already held
-                if IsShiftKeyDown() then
-                    GameTooltip_ShowCompareItem()
-                end
-                
-                GameTooltip:Show()
-                
-                -- Track shift key state while hovering
-                self.isHovering = true
-                self.lastShiftState = IsShiftKeyDown()
-            end)
-            
-            btn:SetScript("OnLeave", function(self) 
-                self.isHovering = false
-                GameTooltip:Hide()
-            end)
-            
-            -- OnUpdate to detect shift key changes while hovering
-            btn:SetScript("OnUpdate", function(self, elapsed)
-                if self.isHovering then
-                    local shiftDown = IsShiftKeyDown()
-                    if shiftDown ~= self.lastShiftState then
-                        self.lastShiftState = shiftDown
-                        -- Refresh tooltip
-                        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                        GameTooltip:SetBagItem(self.itemData.bagID, self.itemData.slotID)
-                        if shiftDown then
-                            GameTooltip_ShowCompareItem()
-                        end
-                        GameTooltip:Show()
-                    end
-                end
-            end)
+            -- Standard Template handles clicks now!
+            -- We only need to ensure the button is shown
             btn:Show()
             
             btnIdx = btnIdx + 1
         end
+
         
         -- Calculate section height
         local numRows = math.ceil(#catItems / COLS_PER_SECTION)
